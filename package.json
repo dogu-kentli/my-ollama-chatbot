@@ -1,0 +1,30 @@
+{
+  "name": "my-ollama-chatbot",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "activationEvents": [
+    "onCommand:my-chatbot.start"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "my-chatbot.start",
+        "title": "Start Ollama Chatbot"
+      }
+    ]
+  }
+}
