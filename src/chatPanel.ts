@@ -29,6 +29,8 @@ export class ChatPanel {
         this.panel.webview.onDidReceiveMessage(async (msg) => {
             if (msg.type === 'chat') await this.handleChat(msg.text);
             if (msg.type === 'listFiles') await this.handleListFiles();
+            if (msg.type === 'getModels') await this.handleGetModels();
+            if (msg.type === 'setModel') await this.handleSetModel(msg.model);
         });
         this.panel.onDidDispose(() => { this.panel = undefined; });
     }
@@ -62,13 +64,48 @@ export class ChatPanel {
         display: flex;
         align-items: center;
         gap: 8px;
+        justify-content: space-between;
         background: var(--vscode-sideBar-background);
+    }
+
+    #header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
 
     #header h2 {
         font-size: 13px;
         font-weight: 600;
         letter-spacing: 0.5px;
+    }
+
+    /* Model Selector */
+    #model-selector {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+    }
+
+    #model-dropdown {
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: border-color 0.2s;
+    }
+
+    #model-dropdown:hover {
+        border-color: var(--vscode-focusBorder);
+    }
+
+    #model-dropdown:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder);
     }
 
     /* Messages Container */
@@ -315,8 +352,16 @@ export class ChatPanel {
 </head>
 <body>
 <div id="header">
-    <span>💬</span>
-    <h2>Ollama Chat</h2>
+    <div id="header-left">
+        <span>💬</span>
+        <h2>Ollama Chat</h2>
+    </div>
+    <div id="model-selector">
+        <label for="model-dropdown" style="font-size: 11px;">Model:</label>
+        <select id="model-dropdown" title="Modeli seçin">
+            <option value="">Yükleniyor...</option>
+        </select>
+    </div>
 </div>
 <div id="messages">
     <div id="empty-state">
@@ -345,8 +390,62 @@ export class ChatPanel {
         const sendBtn = document.getElementById('send');
         const filesBtn = document.getElementById('files');
         const clearBtn = document.getElementById('clear');
+        const modelDropdown = document.getElementById('model-dropdown');
         const emptyState = document.getElementById('empty-state');
         let isLoading = false;
+
+        // Model seçici yükle
+        function loadModels() {
+            vscode.postMessage({ type: 'getModels' });
+        }
+
+        modelDropdown.addEventListener('change', function() {
+            if (this.value) {
+                vscode.postMessage({ type: 'setModel', model: this.value });
+            }
+        });
+
+        window.addEventListener('message', function(event) {
+            const message = event.data;
+            
+            if (message.type === 'models') {
+                // Modelleri dropdown'a ekle
+                modelDropdown.innerHTML = '';
+                if (message.models && message.models.length > 0) {
+                    message.models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model;
+                        option.textContent = model;
+                        if (model === message.currentModel) {
+                            option.selected = true;
+                        }
+                        modelDropdown.appendChild(option);
+                    });
+                } else {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'Model yok';
+                    option.disabled = true;
+                    modelDropdown.appendChild(option);
+                }
+                return;
+            }
+
+            removeTypingIndicator();
+            isLoading = false;
+            sendBtn.disabled = false;
+            filesBtn.disabled = false;
+
+            if (message.type === 'response') {
+                addMessage(message.content, 'bot', '🤖');
+            } else if (message.type === 'tool') {
+                addMessage(message.content, 'tool', '⚙️');
+            } else if (message.type === 'error') {
+                addMessage(message.content, 'error', '❌');
+            } else if (message.type === 'filesList') {
+                addMessage(message.files, 'tool', '📁');
+            }
+        });
 
         function removeEmptyState() {
             if (emptyState && emptyState.parentElement === msgs) {
@@ -443,30 +542,33 @@ export class ChatPanel {
             emptyState = document.getElementById('empty-state');
         };
 
-        window.addEventListener('message', function(event) {
-            const message = event.data;
-            removeTypingIndicator();
-            isLoading = false;
-            sendBtn.disabled = false;
-            filesBtn.disabled = false;
-
-            if (message.type === 'response') {
-                addMessage(message.content, 'bot', '🤖');
-            } else if (message.type === 'tool') {
-                addMessage(message.content, 'tool', '⚙️');
-            } else if (message.type === 'error') {
-                addMessage(message.content, 'error', '❌');
-            } else if (message.type === 'filesList') {
-                addMessage(message.files, 'tool', '📁');
-            }
-        });
-
         // Auto-focus input
         input.focus();
+        
+        // Modelleri başlangıçta yükle
+        loadModels();
     })();
 </script>
 </body>
 </html>`;
+    }
+
+    private async handleGetModels() {
+        const models = await this.ollama.getAvailableModels();
+        const currentModel = this.ollama.getCurrentModel();
+        this.panel?.webview.postMessage({ 
+            type: 'models', 
+            models,
+            currentModel
+        });
+    }
+
+    private async handleSetModel(model: string) {
+        await this.ollama.setModel(model);
+        this.panel?.webview.postMessage({ 
+            type: 'response', 
+            content: `✅ Model değiştirildi: ${model}` 
+        });
     }
 
     private async handleChat(text: string) {
@@ -480,7 +582,7 @@ export class ChatPanel {
     }
 
     private async checkTools(response: string) {
-        const readMatch = response.match(/oku:\\s*(.+)/);
+        const readMatch = response.match(/oku:\s*(.+)/);
         if (readMatch) {
             try {
                 const content = await this.tools.readFile(readMatch[1].trim());
@@ -494,7 +596,7 @@ export class ChatPanel {
             return;
         }
 
-        const cmdMatch = response.match(/komut:\\s*(.+)/);
+        const cmdMatch = response.match(/komut:\s*(.+)/);
         if (cmdMatch) {
             try {
                 const result = await this.tools.runCommand(cmdMatch[1].trim());
